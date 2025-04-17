@@ -39,9 +39,10 @@ def call_llama(prompt):
         yield "Error: Unable to generate response."
 
 
-def analyze_resume(resume_text, optimize=False):
-    """Analyze a resume and return job matching scores."""
-    job_descriptions = MongoDB().get_all_job_descriptions()  # ✅ แก้ให้เรียกใช้ instance
+def analyze_resume(resume_text, candidate_id=None, optimize=False):
+    """Analyze a resume and return job matching scores + store results."""
+    db = MongoDB()
+    job_descriptions = db.get_all_job_descriptions()
 
     job_embeddings = {
         position: data["embedding"]
@@ -54,9 +55,40 @@ def analyze_resume(resume_text, optimize=False):
     if resume_embedding is None:
         return {}
 
-    matching_scores = {
-        position: cosine_similarity([resume_embedding], [job_embedding])[0][0] * 100
+    # Calculate base matching scores using cosine similarity
+    base_scores = {
+        position: cosine_similarity([resume_embedding], [job_embedding])[0][0]
         for position, job_embedding in job_embeddings.items()
+    }
+
+    # Calculate keyword matching scores
+    matching_scores = {}
+    for position, cosine_score in base_scores.items():
+        job_requirements = job_descriptions[position]["requirements"].lower()
+        resume_lower = resume_text.lower()
+        
+        # Extract meaningful keywords (words longer than 3 characters)
+        keywords = [word for word in job_requirements.split() if len(word) > 3]
+        if not keywords:
+            keyword_score = 0
+        else:
+            # Count matching keywords
+            matches = sum(1 for keyword in keywords if keyword in resume_lower)
+            # Calculate keyword score (0-30 points)
+            keyword_score = (matches / len(keywords)) * 30
+        
+        # Combine scores with weights:
+        # - Cosine similarity: 70% of final score
+        # - Keyword matching: 30% of final score
+        final_score = (cosine_score * 70) + keyword_score
+        
+        # Round to 2 decimal places
+        matching_scores[position] = round(final_score, 2)
+
+    # Prepare data for database
+    match_result_doc = {
+        "candidate_id": candidate_id,
+        "matching_scores": matching_scores,
     }
 
     if optimize:
@@ -64,45 +96,36 @@ def analyze_resume(resume_text, optimize=False):
         for position, score in matching_scores.items():
             job_requirements = job_descriptions[position]["requirements"]
 
-            # สร้างข้อความ Prompt สำหรับ LLM
             summary = "".join(
                 call_llama(
-                    f"สรุปทักษะที่ตรงกันระหว่างเรซูเม่: {resume_text} และความต้องการของงาน: {job_requirements} พร้อมระบุทักษะที่ยังขาดหรือควรพัฒนาเพิ่มเติม สรุปให้กระชับ อ่านเข้าใจง่าย โดยไม่เกิน 500 ตัวอักษรในแต่ละตำแหน่ง"
+                    f"""คุณเป็น HR ที่กำลังประเมินความเหมาะสมระหว่างผู้สมัครกับตำแหน่งงาน 
+                    ตำแหน่งงาน: {position}
+                    ความต้องการของงาน: {job_requirements}
+                    เรซูเม่ของผู้สมัคร: {resume_text}
+                    
+                    กรุณาสรุปการประเมินในรูปแบบต่อไปนี้ (ขึ้นบรรทัดใหม่ทุกหัวข้อ):
+                    
+                    [ความเหมาะสมกับงาน]
+                    - สรุปความเหมาะสมโดยรวมกับตำแหน่งงาน
+                    
+                    [จุดเด่น]
+                    - ทักษะและประสบการณ์ที่ตรงกับงานและเป็นจุดเด่นของผู้สมัคร
+                    
+                    [ข้อควรพัฒนา]
+                    - ทักษะหรือประสบการณ์ที่ควรพัฒนาเพิ่มเติมเพื่อให้เหมาะสมกับงานมากขึ้น
+                    
+                    เขียนให้กระชับ อ่านเข้าใจง่าย เป็นธรรมชาติ เหมือน HR พูดกับเพื่อนร่วมงาน โดยไม่เกิน 300 ตัวอักษร
+                    อย่าลืมขึ้นบรรทัดใหม่ทุกหัวข้อ"""
                 )
             )
 
-            results[position] = (score, summary)
+            results[position] = {"score": score, "summary": summary}
 
-    return results
+        match_result_doc["detailed_results"] = results
+    else:
+        match_result_doc["detailed_results"] = None
 
+    # Save to database
+    db.matching_results_collection.insert_one(match_result_doc)
 
-# summary_prompt = (
-#     f"วิเคราะห์เรซูเม่นี้เพื่อประเมินการจับคู่กับตำแหน่ง '{job_requirements}' "
-#     f"คะแนน: {score:.2f}%\n"
-#     f"จุดแข็ง: สรุปskillที่ตรงกับความต้องการของงาน\n"
-#     f"จุดอ่อน: สรุปskillที่ขาดหายไปหรือควรพัฒนา\n"
-#     f"และแนะนำวิธีการพัฒนาทักษะแบบสรุป"
-# )
-# summary = call_llama(summary_prompt)
-
-# summary = "".join(
-#     call_llama(
-#         f"ให้สรุปว่าทำไมคะแนนความเหมาะสมอยู่ที่ {score:.2f}% "
-#         f"โดยพิจารณาจากเรซูเม่: {resume_text} และความต้องการของงาน: {job_requirements} โดยดูว่า skill ไหนที่เหมาะสม และ skill ไหนที่ต้องพัฒนา"
-#     )
-# )
-
-#     return {
-#         position: f"{score:.2f}% - {call_llama(f'Given the resume and job description, explain why the match score is {score:.2f}%')}"
-#         for position, score in matching_scores.items()
-#     }
-
-# return {position: f"{score:.2f}%" for position, score in matching_scores.items()}
-
-#     # --- 5. ใช้ Llama วิเคราะห์ผลลัพธ์ Matching Score ---
-# results = {}
-# for position, score in matching_scores.items():
-#     analysis_prompt = f"""
-#     Given a resume with skills: {optimized_resume}, and a job description: {optimized_job_descriptions[position]},
-#     explain why the matching score is {score:.2f}%. Highlight strengths and weaknesses.
-#     """
+    return match_result_doc["detailed_results"] or matching_scores
