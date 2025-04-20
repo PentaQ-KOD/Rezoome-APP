@@ -1,4 +1,4 @@
-# Resume Atlas API
+# Rezoome - APP
 
 This API provides endpoints to interact with the Resume Atlas system, allowing you to parse PDFs, analyze resumes, classify text, generate embeddings, and more.
 
