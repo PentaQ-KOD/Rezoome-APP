@@ -1,5 +1,6 @@
 from pymongo import MongoClient
 from datetime import datetime
+from utils.normalize_data import normalize_resume_data
 
 
 class MongoDB:
@@ -16,6 +17,7 @@ class MongoDB:
         self.auth_message = self.db["inbox_auth"]
         self.job_descriptions = self.db["job_descriptions"]
         self.matching_results = self.db["results"]
+        self.matching_results_collection = self.db["matching_results"]
 
     def get_all_job_descriptions(self):
         jobs = self.job_descriptions.find(
@@ -50,25 +52,29 @@ class MongoDB:
         return self.auth_message.find_one({"message_id": message_id}) is not None
 
     def insert_candidate(self, candidate_id, personal_info, parsed_text, embedding):
-        candidate_data = {
-            "candidate_id": candidate_id,
-            "name": personal_info.get("name"),
-            "email": personal_info.get("email"),
-            "phone": personal_info.get("phone"),
-            "address": personal_info.get("address"),
-            "education": personal_info.get("education"),
-            "skills": personal_info.get("skills"),
-            "work_experience": personal_info.get("work_experience"),
-            "certifications": personal_info.get("certifications"),
-            "projects": personal_info.get("projects"),
-            "hobbies": personal_info.get("hobbies"),
-            "references": personal_info.get("references"),
-            "position": personal_info.get("position"),
-            "languages": personal_info.get("languages"),
-            "parsed_text": parsed_text,
-            "embedding": embedding,
-        }
-        return self.candidates_collection.insert_one(candidate_data).inserted_id
+        # Validate required fields
+        if not candidate_id or not parsed_text:
+            raise ValueError("Candidate ID and parsed text are required")
+            
+        # Normalize data
+        candidate_data = normalize_resume_data(
+            candidate_id=candidate_id,
+            raw_data=personal_info,
+            parsed_text=parsed_text,
+            embedding=embedding
+        )
+        
+        # Validate normalized data structure
+        required_fields = ["candidate_id", "name", "email", "parsed_text"]
+        for field in required_fields:
+            if field not in candidate_data:
+                raise ValueError(f"Missing required field: {field}")
+                
+        try:
+            return self.candidates_collection.insert_one(candidate_data).inserted_id
+        except Exception as e:
+            print(f"Error inserting candidate data: {e}")
+            raise
 
     def insert_resume(self, resume_id, file_name, file_type):
         resumes = {
@@ -98,15 +104,13 @@ class MongoDB:
             print("Insert Error:", e)  # Debug error
             return None
 
-    # def insert_result(self, resume_id, job_id, matching_score, explanation):
-    #     result = {
-    #         "resume_id": resume_id,
-    #         "job_id": job_id,
-    #         "matching_score": matching_score,
-    #         "explanation": explanation,
-    #         "analyzed_at": datetime.now(),
-    #     }
-    #     return self.matching_results.insert_one(result).inserted_id
+    def insert_matching_result(self, candidate_id, matching_scores, detailed_results=None):
+        result_doc = {
+            "candidate_id": candidate_id,
+            "matching_scores": matching_scores,
+            "detailed_results": detailed_results
+        }
+        return self.matching_results_collection.insert_one(result_doc).inserted_id
 
     def get_user(self, email):
         return self.users.find_one({"email": email})
@@ -116,6 +120,16 @@ class MongoDB:
 
     def get_job(self, job_id):
         return self.job_descriptions.find_one({"_id": job_id})
+    
+    def get_matching_result_by_candidate(self, candidate_id):
+        return self.matching_results_collection.find_one({"candidate_id": candidate_id})
+    
+    def get_top_matching_result(self, candidate_id):
+        results = self.matching_results_collection.find({"candidate_id": candidate_id})
+        valid_results = [r for r in results if "score" in r and "position" in r]
+        return max(valid_results, key=lambda x: x["score"], default=None)
+
+
 
     # def get_results(self, resume_id):
     #     return list(self.matching_results.find({"resume_id": resume_id}))
