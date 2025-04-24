@@ -69,19 +69,27 @@ def analyze_resume(resume_text, candidate_id=None, optimize=False):
         
         # Extract meaningful keywords (words longer than 3 characters)
         keywords = [word for word in job_requirements.split() if len(word) > 3]
-        if not keywords:
-            keyword_score = 0
-        else:
+        
+        # Initialize final_score with base cosine score converted to 0-100 scale
+        final_score = cosine_score * 100
+        
+        if keywords:  # Only calculate bonus if there are keywords
             # Count matching keywords
             matches = sum(1 for keyword in keywords if keyword in resume_lower)
-            # Calculate keyword score (0-30 points)
-            keyword_score = (matches / len(keywords)) * 30
-        
-        # Combine scores with weights:
-        # - Cosine similarity: 70% of final score
-        # - Keyword matching: 30% of final score
-        final_score = (cosine_score * 70) + keyword_score
-        
+            # Calculate keyword match percentage
+            keyword_match_percentage = matches / len(keywords)
+            
+            # Adjust score based on cosine similarity and keyword matching
+            if cosine_score >= 0.8:  # High similarity
+                bonus = keyword_match_percentage * 20  # Up to 20 points bonus
+            elif cosine_score >= 0.5:  # Medium similarity
+                bonus = keyword_match_percentage * 15  # Up to 15 points bonus
+            else:  # Low similarity
+                bonus = keyword_match_percentage * 10  # Up to 10 points bonus
+            
+            # Add bonus to final score
+            final_score += bonus
+            
         # Round to 2 decimal places
         matching_scores[position] = round(final_score, 2)
 
