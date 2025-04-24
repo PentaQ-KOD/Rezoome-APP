@@ -144,65 +144,173 @@ class ResumeProcessor:
 
     def extract_resume_info(self, resume_text):
         """ส่งข้อความไปยัง LLM เพื่อแยกข้อมูลเรซูเม่"""
-        system_prompt = f"""
+        # แยกข้อมูลส่วนบุคคลก่อน
+        personal_info_prompt = """
         คุณคือ Senior Human Resource Specialist ที่มีความเชี่ยวชาญในการวิเคราะห์เรซูเม่ของผู้สมัครงาน 
-        บทบาทของคุณคือช่วยสรุปข้อมูลที่สำคัญจากเรซูเม่ในรูปแบบ JSON เพื่อให้กระบวนการสรรหาบุคลากรมีประสิทธิภาพมากขึ้น  
+        บทบาทของคุณคือช่วยแยกข้อมูลส่วนบุคคลจากเรซูเม่
 
-        โปรดดึงข้อมูลต่อไปนี้จากเรซูเม่ของผู้สมัคร:  
+        กฎสำคัญ:
+        1. คุณต้องส่งคืนเฉพาะ JSON เท่านั้น
+        2. ห้ามใช้เครื่องหมาย ``` หรือข้อความอื่นใดนอกเหนือจาก JSON
+        3. JSON ต้องเริ่มต้นด้วย { และจบด้วย } เท่านั้น
+        4. ถ้าไม่พบข้อมูล ให้ใช้ค่า null
+        5. ไม่ต้องแปลงข้อมูลให้เป็นภาษาไทย
 
-        - **name**: ชื่อ-นามสกุลของผู้สมัคร  
-        - **email**: อีเมลติดต่อ  
-        - **phone**: หมายเลขโทรศัพท์  
-        - **address**: ที่อยู่ปัจจุบัน  
-        - **position**: ตำแหน่งที่ผู้สมัครสนใจ  
-        - **education**: ประวัติการศึกษา (รวมถึงระดับการศึกษา, ชื่อสถาบัน และปีที่จบการศึกษา)  
-        - **work_experience**: ประสบการณ์ทำงาน (รวมถึงชื่อตำแหน่ง, ชื่อบริษัท, ระยะเวลาทำงาน และหน้าที่ความรับผิดชอบโดยสังเขป)  
-        - **skills**: ทักษะที่เกี่ยวข้อง (ทั้ง Hard Skills และ Soft Skills)  
-        - **languages**: ความสามารถทางภาษา (ระบุระดับความเชี่ยวชาญ เช่น พื้นฐาน, ปานกลาง, ดี, ดีมาก)  
-        - **certifications**: ใบรับรองทางวิชาชีพหรือประกาศนียบัตรที่เกี่ยวข้อง  
-        - **projects**: โครงการที่เคยทำ (รวมถึงชื่อโครงการ, รายละเอียดโดยย่อ และปีที่ดำเนินการ)  
-        - **hobbies**: งานอดิเรกหรือความสนใจส่วนตัวที่อาจเกี่ยวข้องกับตำแหน่งงาน  
-        - **references**: บุคคลอ้างอิง (ชื่อ, ความสัมพันธ์ และข้อมูลติดต่อ)  
+        โปรดแยกข้อมูลส่วนบุคคลจากเรซูเม่ดังนี้:
+        1. ชื่อ-นามสกุล: มักจะอยู่ที่ส่วนบนของเรซูเม่
+        2. อีเมล: มักจะมีรูปแบบ xxx@xxx.xxx
+        3. เบอร์โทรศัพท์: มักจะมีรูปแบบ 0XX-XXX-XXXX หรือ +66XX-XXX-XXXX
+        4. ที่อยู่: มักจะอยู่หลังข้อมูลติดต่อ
+        5. ตำแหน่งที่สนใจ: มักจะอยู่หลังข้อมูลส่วนตัว หรือในส่วนของ Career Objective
 
-        โปรดส่งข้อมูลในรูปแบบ JSON ที่มีโครงสร้างชัดเจน และสะท้อนข้อมูลที่สำคัญต่อการพิจารณารับสมัครงาน 
-        Output JSON อย่างเดียว โดยไม่ต้องอธิบายหรือให้ความคิดเห็นเพิ่มเติม
-        ถ้าไม่พบข้อมูลในเรซูเม่ ให้ส่งค่านั้นเป็น NULL 
+        โครงสร้าง JSON ที่ต้องการ:
+        {
+            "name": "ชื่อ-นามสกุล",
+            "email": "อีเมล",
+            "phone": "เบอร์โทรศัพท์",
+            "address": "ที่อยู่",
+            "position": "ตำแหน่งที่สนใจ"
+        }
         """
 
-        response = together.chat.completions.create(
-            model="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": resume_text},
-            ],
-            temperature=0.3,
-        )
-
-        extracted_info = response.choices[0].message.content
-
-        # ตรวจสอบและทำความสะอาดข้อมูล JSON
         try:
-            # ลบอักขระที่ไม่จำเป็นและขอบเขต code block ที่อาจมี
-            cleaned_json = re.sub(r"^```json|```$", "", extracted_info.strip())
-            # แปลงเป็น Python dict
-            json_data = json.loads(cleaned_json)
-            return json_data  # ส่งกลับเป็น dict แทนที่จะเป็น string
-        except json.JSONDecodeError as e:
-            print(f"❌ Error parsing JSON from LLM response: {e}")
-            print(f"LLM raw response: {extracted_info}")
-            # สร้าง dict ว่างเป็นค่าเริ่มต้น
-            return {
+            # แยกข้อมูลส่วนบุคคล
+            personal_response = together.chat.completions.create(
+                model="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+                messages=[
+                    {"role": "system", "content": personal_info_prompt},
+                    {"role": "user", "content": resume_text},
+                ],
+                temperature=0.3,
+            )
+            
+            personal_info = personal_response.choices[0].message.content.strip()
+            print(f"Personal Info Response: {personal_info}")
+            
+            # ทำความสะอาด response
+            if personal_info.startswith("```json"):
+                personal_info = personal_info.replace("```json", "").strip()
+            if personal_info.startswith("```"):
+                personal_info = personal_info.replace("```", "").strip()
+            if personal_info.endswith("```"):
+                personal_info = personal_info.replace("```", "").strip()
+                
+            personal_data = json.loads(personal_info)
+            print(f"Parsed Personal Data: {personal_data}")
+            
+        except Exception as e:
+            print(f"Error extracting personal info: {e}")
+            personal_data = {
                 "name": None,
                 "email": None,
                 "phone": None,
                 "address": None,
-                "education": None,
-                "skills": None,
-                "work_experience": None,
-                "certifications": None,
-                "projects": None,
-                "hobbies": None,
-                "references": None,
-                "position": None,
-                "languages": None,
+                "position": None
             }
+
+        # แยกข้อมูลอื่นๆ
+        other_info_prompt = """
+        คุณคือ Senior Human Resource Specialist ที่มีความเชี่ยวชาญในการวิเคราะห์เรซูเม่ของผู้สมัครงาน 
+        บทบาทของคุณคือช่วยสรุปข้อมูลที่สำคัญจากเรซูเม่ในรูปแบบ JSON ที่มีโครงสร้างชัดเจน
+
+        กฎสำคัญ:
+        1. คุณต้องส่งคืนเฉพาะ JSON เท่านั้น
+        2. ห้ามใช้เครื่องหมาย ``` หรือข้อความอื่นใดนอกเหนือจาก JSON
+        3. JSON ต้องเริ่มต้นด้วย { และจบด้วย } เท่านั้น
+        4. ถ้าไม่พบข้อมูล ให้ใช้ค่า null
+        5. ไม่ต้องแปลงข้อมูลให้เป็นภาษาไทย
+
+        โครงสร้าง JSON ที่ต้องการ:
+        {
+            "education": [
+                {
+                    "degree": "วุฒิการศึกษา",
+                    "institution": "สถาบันการศึกษา",
+                    "year": "ปีที่จบ",
+                    "major": "สาขาวิชา",
+                    "gpa": "เกรดเฉลี่ย"
+                }
+            ],
+            "work_experience": [
+                {
+                    "position": "ตำแหน่ง",
+                    "company": "บริษัท",
+                    "duration": "ระยะเวลา",
+                    "responsibilities": "หน้าที่ความรับผิดชอบ"
+                }
+            ],
+            "skills": {
+                "technical": ["ทักษะทางเทคนิค 1", "ทักษะทางเทคนิค 2"],
+                "soft": ["ทักษะส่วนบุคคล 1", "ทักษะส่วนบุคคล 2"]
+            },
+            "languages": {
+                "ภาษา": "ระดับความสามารถ"
+            },
+            "certifications": [
+                {
+                    "name": "ชื่อใบรับรอง",
+                    "issuer": "ผู้ให้การรับรอง",
+                    "year": "ปีที่ได้รับ"
+                }
+            ],
+            "projects": [
+                {
+                    "name": "ชื่อโครงการ",
+                    "description": "รายละเอียด",
+                    "year": "ปีที่ทำ"
+                }
+            ],
+            "hobbies": ["งานอดิเรก 1", "งานอดิเรก 2"],
+            "references": [
+                {
+                    "name": "ชื่อผู้อ้างอิง",
+                    "relationship": "ความสัมพันธ์",
+                    "contact": "ข้อมูลติดต่อ"
+                }
+            ]
+        }
+        """
+
+        try:
+            # แยกข้อมูลอื่นๆ
+            other_response = together.chat.completions.create(
+                model="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+                messages=[
+                    {"role": "system", "content": other_info_prompt},
+                    {"role": "user", "content": resume_text},
+                ],
+                temperature=0.3,
+            )
+            
+            other_info = other_response.choices[0].message.content.strip()
+            print(f"Other Info Response: {other_info}")
+            
+            # ทำความสะอาด response
+            if other_info.startswith("```json"):
+                other_info = other_info.replace("```json", "").strip()
+            if other_info.startswith("```"):
+                other_info = other_info.replace("```", "").strip()
+            if other_info.endswith("```"):
+                other_info = other_info.replace("```", "").strip()
+                
+            other_data = json.loads(other_info)
+            print(f"Parsed Other Data: {other_data}")
+            
+        except Exception as e:
+            print(f"Error extracting other info: {e}")
+            other_data = {
+                "education": [],
+                "work_experience": [],
+                "skills": {"technical": [], "soft": []},
+                "languages": {},
+                "certifications": [],
+                "projects": [],
+                "hobbies": [],
+                "references": []
+            }
+
+        # รวมข้อมูล
+        final_data = {**personal_data, **other_data}
+        print(f"Final Data: {final_data}")
+        
+        return final_data
