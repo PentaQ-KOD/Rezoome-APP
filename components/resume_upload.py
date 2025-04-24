@@ -9,21 +9,27 @@ import modules.job_description as job_description
 from modules.embed import get_embedding
 from typing import Optional
 import json
+import nest_asyncio
 
+nest_asyncio.apply()
 
 db = MongoDB()
 
 
 # Existing Resume Upload functionality
-candidate_id = st.sidebar.text_input("Enter Candidate ID:", value="candidate_123")
+default_id = f"candidate_{uuid.uuid4().hex[:8]}"
+#candidate_id = st.sidebar.text_input("Enter Candidate ID:", value=default_id)
+candidate_id = default_id
+st.sidebar.subheader("Candidate ID")
+st.sidebar.text(default_id)
 mode = st.sidebar.radio("Select Mode:", ["Classify", "Maximize Performance"])
 
 # File uploader
-uploaded_file = st.sidebar.file_uploader("Upload PDF", type="pdf")
+uploaded_file = st.file_uploader("Upload PDF", type="pdf")
 
-submit_button = st.sidebar.button("Submit")
+submit_button = st.button("Submit")
 
-if uploaded_file is not None and submit_button:
+async def process_resume(uploaded_file, candidate_id, mode):
     # Process PDF
     processor = ResumeProcessor()
     parsed_text, embedding = processor.process_pdf(uploaded_file)
@@ -39,9 +45,6 @@ if uploaded_file is not None and submit_button:
         file_name = uploaded_file.name
         file_type = uploaded_file.type
 
-        # Insert resume data into MongoDB
-        db.insert_resume(resume_id, file_name, file_type)
-        st.success("Resume has been successfully saved to MongoDB.")
 
         # Classification always runs
         classification = classify_text(parsed_text)
@@ -59,52 +62,66 @@ if uploaded_file is not None and submit_button:
         ]
         if any(keyword in classification for keyword in keywords):
             st.success("The uploaded file is classified as a Resume/CV.")
-
-            # Extract personal information
-            extracted_info = processor.extract_resume_info(parsed_text)
-
-            # ไม่ต้องแปลง JSON อีกครั้งเพราะ extract_resume_info ส่งคืนเป็น dict แล้ว
-            personal_info = extracted_info  # extracted_info เป็น dict แล้ว
-
-            # แสดงข้อมูลที่สกัดได้
-            st.subheader("Extracted Information")
-            st.json(personal_info)
-
-            # บันทึกข้อมูลผู้สมัครลง MongoDB
-            db.insert_candidate(candidate_id, personal_info, parsed_text, embedding)
-
-            st.success("Candidate data has been successfully saved to MongoDB.")
+            # Insert resume data into MongoDB
+            
 
             # Only run job matching based on selected mode
             if mode == "Maximize Performance":
-                job_matching_results = job_description.analyze_resume(
-                    parsed_text, optimize=True
+                db.insert_resume(resume_id, file_name, file_type)
+                st.success("Resume has been successfully saved to MongoDB.")
+                # Extract personal information
+                # max_length = 10000  # Adjust this value based on the function's requirements
+                # truncated_text = parsed_text[:max_length] if len(parsed_text) > max_length else parsed_text
+                personal_info = processor.extract_resume_info(parsed_text)
+
+                # ไม่ต้องแปลง JSON อีกครั้งเพราะ extract_resume_info ส่งคืนเป็น dict แล้ว
+                # personal_info = extracted_info  # extracted_info เป็น dict แล้ว
+
+                # แสดงข้อมูลที่สกัดได้
+                st.subheader("Extracted Information")
+                print(personal_info)
+                st.json(personal_info)
+
+                # บันทึกข้อมูลผู้สมัครลง MongoDB
+                db.insert_candidate(
+                    candidate_id=candidate_id,
+                    personal_info=personal_info,
+                    parsed_text=parsed_text,
+                    embedding=embedding
                 )
 
-                # Sort results from highest to lowest
+                st.success("Candidate data has been successfully saved to MongoDB.")
+                
+                job_matching_results = job_description.analyze_resume(
+                    parsed_text, candidate_id, optimize=True
+                )
+
+                # ✅ ปรับการ sort ให้ robust
                 sorted_results = sorted(
                     job_matching_results.items(),
-                    key=lambda x: x[1][0],  # Use score for sorting
+                    key=lambda x: x[1]["score"],  # ← ใช้ค่า score จริงๆ
                     reverse=True,
                 )
 
                 st.subheader("Job Matching Results")
-                for position, (score, analysis_stream) in sorted_results:
-                    with st.expander(f"**{position}:** {score:.2f}%"):
-                        analysis_box = st.empty()
-                        full_text = ""
+                for position, result in sorted_results:
+                    score = result["score"]
+                    summary = result.get("summary", "")
 
-                        # Stream answers continuously
-                        if analysis_stream:
-                            for chunk in analysis_stream:
-                                full_text += chunk
-                                analysis_box.write(full_text)
+                    with st.expander(f"**{position}:** {score:.2f}%"):
+                        st.write(summary)
+
         else:
             st.error(
                 "The uploaded file is not classified as a Resume/CV. Please upload a valid resume."
             )
 
 
+if uploaded_file is not None and submit_button:
+    import asyncio
+    asyncio.run(process_resume(uploaded_file, candidate_id, mode))
+
+st.sidebar.subheader("Job Matching Results")
 uploaded_file = st.sidebar.file_uploader("Upload CSV File", type=["csv"])
 
 if uploaded_file:
@@ -140,24 +157,3 @@ if uploaded_file:
                 f"Successfully inserted {inserted_count} job descriptions!"
             )
 
-
-# candidate_data = {
-#     "candidate_id": candidate_id,
-#     "name": personal_info.get("name"),
-#     "email": personal_info.get("email"),
-#     "phone": personal_info.get("phone"),
-#     "address": personal_info.get("address"),
-#     "education": personal_info.get("education"),
-#     "skills": personal_info.get("skills"),
-#     "work_experience": personal_info.get("work_experience"),
-#     "certifications": personal_info.get("certifications"),
-#     "projects": personal_info.get("projects"),
-#     "hobbies": personal_info.get("hobbies"),
-#     "references": personal_info.get("references"),
-#     "position": personal_info.get("position"),
-#     "languages": personal_info.get("languages"),
-#     "parsed_text": parsed_text,
-#     "embedding": embedding,
-# }
-# # Insert data into MongoDB
-# db.insert_candidate(candidate_data)
