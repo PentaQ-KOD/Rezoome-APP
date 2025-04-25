@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+pymongo
+requests
+scikit-learn
+nltk
+pythainlp
+FixThaiPDF
+langchain-community
+together
+llama-cloud
+llama-cloud-services
+llama-index-core
+llama-index-readers-file
