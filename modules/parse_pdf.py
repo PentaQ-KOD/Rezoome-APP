@@ -9,7 +9,7 @@ from fixthaipdf import clean
 import nltk
 from nltk.corpus import stopwords
 from modules.embed import get_embedding
-from database import MongoDB
+from utils.database import MongoDB
 from dotenv import load_dotenv
 from modules.job_description import call_llama
 from together import Together

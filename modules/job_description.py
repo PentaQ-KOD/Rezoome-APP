@@ -3,7 +3,7 @@ from modules.embed import get_embedding
 import together
 from together import Together
 from dotenv import load_dotenv
-from database import MongoDB
+from utils.database import MongoDB
 import os
 
 # Load API Key

@@ -11,7 +11,7 @@ from modules.classify_text import classify_text
 from modules.parse_pdf import ResumeProcessor
 from modules.embed import get_embedding
 from modules.job_description import analyze_resume
-from database import MongoDB
+from utils.database import MongoDB
 
 db = MongoDB()
 
