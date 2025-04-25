@@ -22,7 +22,8 @@ def main():
         host="0.0.0.0", 
         port=port, 
         reload=is_development,  # Only enable reload in development
-        log_level="info"
+        log_level="info",
+        workers=1  # Set to 1 for single-threaded mode
     )
 
 if __name__ == "__main__":

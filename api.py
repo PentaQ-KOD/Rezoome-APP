@@ -1,3 +1,6 @@
+# =============================================================================
+# Imports and Configurations
+# =============================================================================
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -12,16 +15,20 @@ from modules.email_fetcher import fetch_attachments_and_classify
 from modules.job_description import analyze_resume, call_llama
 from modules.classify_text import classify_text
 from modules.embed import get_embedding
-from database import MongoDB
+from utils.database import MongoDB
 import uvicorn
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 
+# Load environment variables
 load_dotenv()
 
+# =============================================================================
+# FastAPI App Configuration
+# =============================================================================
 app = FastAPI(
     title="Resume Atlas API",
-    description="API for Resume Atlas functionality",
+    description="API for Rezoome-APP",
     version="1.0.0"
 )
 
@@ -34,10 +41,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize database and resume processor
+# Initialize services
 db = MongoDB()
 resume_processor = ResumeProcessor()
 
+# =============================================================================
+# Pydantic Models for Request/Response
+# =============================================================================
 class EmailCredentials(BaseModel):
     email_address: str
     password: str
@@ -72,12 +82,53 @@ class ResumeInfoResponse(BaseModel):
     hobbies: Optional[List[str]]
     references: Optional[List[str]]
 
+class CandidateResponse(BaseModel):
+    candidate_id: str
+    name: Optional[str] = None 
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    position: Optional[str] = None
+    education: Optional[List[Dict[str, Any]]] = None
+    work_experience: Optional[List[Dict[str, Any]]] = None
+    skills: Optional[Dict[str, List[str]]] = None
+    languages: Optional[Dict[str, str]] = None
+    certifications: Optional[List[Dict[str, Any]]] = None
+    created_at: Optional[str] = None
+
+class EmailRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+
+class StatusResponse(BaseModel):
+    status: str
+    version: str
+    uptime: float
+
+# =============================================================================
+# Basic Routes
+# =============================================================================
 @app.get("/")
 async def root():
+    """Welcome endpoint"""
     return {"message": "Welcome to Resume Atlas API"}
 
+@app.get("/status")
+async def get_status():
+    """Get API status and version information"""
+    import time
+    return StatusResponse(
+        status="running",
+        version="1.0.0",
+        uptime=time.time()
+    )
+
+# =============================================================================
+# Resume Processing Routes
+# =============================================================================
 @app.post("/parse-pdf")
 async def parse_pdf(file: UploadFile = File(...)):
+    """Parse a PDF file and extract text content"""
     try:
         # Save the uploaded file temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
@@ -89,7 +140,7 @@ async def parse_pdf(file: UploadFile = File(...)):
             # First try using load_pdf which uses LlamaParse
             resume_text = resume_processor.load_pdf(temp_path)
             if not resume_text or resume_text.strip() == "":
-                # If LlamaParse fails, fall back to PyPDFLoader
+                # Fallback to PyPDFLoader if LlamaParse fails
                 try:
                     print("LlamaParse failed, trying PyPDFLoader fallback...")
                     loader = PyPDFLoader(temp_path)
@@ -114,15 +165,11 @@ async def parse_pdf(file: UploadFile = File(...)):
                 print(f"PyPDFLoader fallback failed: {pdf_error}")
                 raise HTTPException(status_code=400, detail=f"Failed to parse PDF file: {str(parse_error)}")
         
-        # Extract resume information
-        resume_info = resume_processor.extract_resume_info(resume_text)
-        
         # Clean up the temporary file
         os.unlink(temp_path)
         
-        return {"resume_text": resume_text, "resume_info": resume_info}
+        return {"resume_text": resume_text}
     except HTTPException as http_exc:
-        # Re-raise HTTP exceptions
         if 'temp_path' in locals():
             try:
                 os.unlink(temp_path)
@@ -130,7 +177,6 @@ async def parse_pdf(file: UploadFile = File(...)):
                 pass
         raise http_exc
     except Exception as e:
-        # Check if temp file exists and clean up
         if 'temp_path' in locals():
             try:
                 os.unlink(temp_path)
@@ -139,13 +185,59 @@ async def parse_pdf(file: UploadFile = File(...)):
         print(f"Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
 
+@app.post("/extract-resume-info")
+async def extract_resume_info(
+    text_data: Optional[TextRequest] = Body(None),
+    text: Optional[str] = Form(None)
+):
+    """Extract structured information from resume text. 
+    This endpoint expects text that is known to be from a resume/CV."""
+    try:
+        input_text = text or (text_data.text if text_data else None)
+        if not input_text:
+            raise HTTPException(status_code=400, detail="No text provided")
+
+        try:
+            resume_info = resume_processor.extract_resume_info(input_text)
+            if not resume_info:
+                raise HTTPException(status_code=400, detail="Failed to extract resume information")
+            return {"resume_info": resume_info}
+        except Exception as extract_error:
+            print(f"Error extracting resume info: {extract_error}")
+            raise HTTPException(status_code=400, detail="Failed to extract resume information. Make sure the input text is from a resume/CV document.")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing resume text: {str(e)}")
+
+@app.post("/analyze-resume")
+async def analyze_resume_endpoint(
+    analysis_request: Optional[ResumeAnalysisRequest] = Body(None),
+    resume_text: Optional[str] = Form(None),
+    optimize: Optional[bool] = Form(False)
+):
+    """Analyze a resume text and provide insights"""
+    try:
+        input_text = resume_text or (analysis_request.resume_text if analysis_request else None)
+        should_optimize = optimize or (analysis_request.optimize if analysis_request else False)
+        
+        if not input_text:
+            raise HTTPException(status_code=400, detail="No resume text provided")
+        
+        results = analyze_resume(input_text, should_optimize)
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error analyzing resume: {str(e)}")
+
+# =============================================================================
+# Text Processing Routes
+# =============================================================================
 @app.post("/get-embedding")
 async def create_embedding(
     text_data: Optional[TextRequest] = Body(None),
     text: Optional[str] = Form(None)
 ):
+    """Generate text embedding vector"""
     try:
-        # Get text from either form data or JSON body
         input_text = text or (text_data.text if text_data else None)
         if not input_text:
             raise HTTPException(status_code=400, detail="No text provided")
@@ -160,10 +252,9 @@ async def create_embedding(
 
 @app.post("/classify-text")
 async def classify_text_endpoint(text_data: TextRequest):
-    input_text = text_data.text
+    """Classify text into predefined categories"""
     try:
-        # Get text from either form data or JSON body
-        #input_text = text or (text_data.text if text_data else None)
+        input_text = text_data.text
         if not input_text:
             raise HTTPException(status_code=400, detail="No text provided")
         
@@ -175,42 +266,25 @@ async def classify_text_endpoint(text_data: TextRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error classifying text: {str(e)}")
 
-@app.post("/analyze-resume")
-async def analyze_resume_endpoint(
-    analysis_request: Optional[ResumeAnalysisRequest] = Body(None),
-    resume_text: Optional[str] = Form(None),
-    optimize: Optional[bool] = Form(False)
-):
-    try:
-        # Get data from either form data or JSON body
-        input_text = resume_text or (analysis_request.resume_text if analysis_request else None)
-        should_optimize = optimize or (analysis_request.optimize if analysis_request else False)
-        
-        if not input_text:
-            raise HTTPException(status_code=400, detail="No resume text provided")
-        
-        results = analyze_resume(input_text, should_optimize)
-        return {"results": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error analyzing resume: {str(e)}")
-
 @app.post("/call-llm")
 async def call_llm(
     llm_request: Optional[LLMRequest] = Body(None),
     prompt: Optional[str] = Form(None)
 ):
+    """Call LLM model with a prompt"""
     try:
-        # Get prompt from either form data or JSON body
         input_prompt = prompt or (llm_request.prompt if llm_request else None)
         if not input_prompt:
             raise HTTPException(status_code=400, detail="No prompt provided")
         
-        # Since call_llama is a generator, we need to collect its output
         response_text = "".join(list(call_llama(input_prompt)))
         return {"response": response_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calling LLM: {str(e)}")
 
+# =============================================================================
+# Email Management Routes
+# =============================================================================
 @app.post("/fetch-emails")
 async def fetch_emails(
     background_tasks: BackgroundTasks,
@@ -219,8 +293,8 @@ async def fetch_emails(
     password: Optional[str] = Form(None),
     imap_server: Optional[str] = Form("imap.zoho.com")
 ):
+    """Fetch and process emails from IMAP server"""
     try:
-        # Get credentials from either form data or JSON body
         email = email_address or (credentials.email_address if credentials else None)
         pwd = password or (credentials.password if credentials else None)
         server = imap_server or (credentials.imap_server if credentials else "imap.zoho.com")
@@ -228,7 +302,6 @@ async def fetch_emails(
         if not email or not pwd:
             raise HTTPException(status_code=400, detail="Email address and password are required")
         
-        # Run email fetching in background to avoid timeout
         background_tasks.add_task(
             fetch_attachments_and_classify,
             email,
@@ -239,8 +312,43 @@ async def fetch_emails(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching emails: {str(e)}")
 
+@app.post("/email/send")
+async def send_email(email_request: EmailRequest):
+    """Send email to a candidate"""
+    from modules.email_sender import send_email, get_email_settings
+    try:
+        settings = get_email_settings()
+        email_credentials = {
+            'email': os.getenv('EMAIL_USER'),
+            'password': os.getenv('EMAIL_PASSWORD'),
+            'smtp_server': settings['smtp_server'],
+            'smtp_port': settings['smtp_port']
+        }
+        
+        result = send_email(
+            recipient_email=email_request.to,
+            subject=email_request.subject,
+            body=email_request.body,
+            sender_email=email_credentials['email'],
+            sender_password=email_credentials['password'],
+            smtp_server=email_credentials['smtp_server'],
+            smtp_port=email_credentials['smtp_port']
+        )
+        
+        if result[0]:
+            return {"message": "Email sent successfully"}
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to send email: {result[1]}")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error sending email: {str(e)}")
+
+# =============================================================================
+# Job Management Routes
+# =============================================================================
 @app.get("/job-descriptions")
 async def get_job_descriptions():
+    """Get all job descriptions"""
     try:
         job_descriptions = db.get_all_job_descriptions()
         return {"job_descriptions": job_descriptions}
@@ -253,29 +361,60 @@ async def add_job_description(
     position: Optional[str] = Form(None),
     requirements: Optional[List[str]] = Form(None)
 ):
+    """Add a new job description"""
     try:
-        # Get data from either form data or JSON body
         job_position = position or (job_data.position if job_data else None)
         job_requirements = requirements or (job_data.requirements if job_data else None)
         
         if not job_position or not job_requirements:
             raise HTTPException(status_code=400, detail="Position and requirements are required")
         
-        # Generate a unique ID for the job
         job_id = str(uuid.uuid4())
-        
-        # Join requirements into a single string for embedding
         req_text = " ".join(job_requirements)
-        
-        # Generate embedding for the requirements
         embedding = get_embedding(req_text)
         
-        # Insert job description into database
         db.insert_job_description(job_id, job_position, job_requirements, embedding)
         
         return {"message": "Job description added successfully", "job_id": job_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding job description: {str(e)}")
 
+# =============================================================================
+# Candidate Management Routes
+# =============================================================================
+@app.get("/candidates", response_model=List[CandidateResponse])
+async def get_candidates():
+    """Get all candidates"""
+    try:
+        candidates = list(db.candidates_collection.find())
+        return candidates
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching candidates: {str(e)}")
+
+@app.get("/candidates/{candidate_id}", response_model=CandidateResponse)
+async def get_candidate(candidate_id: str):
+    """Get candidate by ID"""
+    try:
+        candidate = db.candidates_collection.find_one({"candidate_id": candidate_id})
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        return candidate
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching candidate: {str(e)}")
+
+@app.get("/matches/{candidate_id}")
+async def get_matches(candidate_id: str):
+    """Get job matches for a candidate"""
+    try:
+        matches = db.matching_results_collection.find_one({"candidate_id": candidate_id})
+        if not matches:
+            raise HTTPException(status_code=404, detail="No matches found for candidate")
+        return matches
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching matches: {str(e)}")
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
 if __name__ == "__main__":
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
