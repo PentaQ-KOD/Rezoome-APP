@@ -129,6 +129,15 @@ cython_debug/
 
 ไม่ได้ใช้
 
-resume-atlas
+resume-api
 
 node_modules
+
+components/
+
+app.py
+
+test_api.py
+
+asd.json
+

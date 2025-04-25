@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: resume-atlas-api
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python run_api.py"
