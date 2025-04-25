@@ -188,12 +188,11 @@ async def parse_pdf(file: UploadFile = File(...)):
 @app.post("/extract-resume-info")
 async def extract_resume_info(
     text_data: Optional[TextRequest] = Body(None),
-    text: Optional[str] = Form(None)
+    text_form: Optional[str] = Form(None)
 ):
-    """Extract structured information from resume text. 
-    This endpoint expects text that is known to be from a resume/CV."""
+    """Extract structured information from resume text."""
     try:
-        input_text = text or (text_data.text if text_data else None)
+        input_text = text_form or (text_data.text if text_data else None)
         if not input_text:
             raise HTTPException(status_code=400, detail="No text provided")
 
@@ -204,27 +203,28 @@ async def extract_resume_info(
             return {"resume_info": resume_info}
         except Exception as extract_error:
             print(f"Error extracting resume info: {extract_error}")
-            raise HTTPException(status_code=400, detail="Failed to extract resume information. Make sure the input text is from a resume/CV document.")
-            
+            raise HTTPException(
+                status_code=400,
+                detail="Failed to extract resume information. Make sure the input text is from a resume/CV document."
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing resume text: {str(e)}")
 
 @app.post("/analyze-resume")
 async def analyze_resume_endpoint(
-    analysis_request: Optional[ResumeAnalysisRequest] = Body(None),
-    resume_text: Optional[str] = Form(None),
-    optimize: Optional[bool] = Form(False)
-):
-    """Analyze a resume text and provide insights"""
+    analysis_request: ResumeAnalysisRequest = Body(...)):
     try:
-        input_text = resume_text or (analysis_request.resume_text if analysis_request else None)
-        should_optimize = optimize or (analysis_request.optimize if analysis_request else False)
-        
+        input_text = analysis_request.resume_text.strip()
+        should_optimize = analysis_request.optimize
+
         if not input_text:
-            raise HTTPException(status_code=400, detail="No resume text provided")
-        
+            raise HTTPException(status_code=400, detail="Resume text cannot be empty")
+
         results = analyze_resume(input_text, should_optimize)
         return {"results": results}
+    
+    except HTTPException:
+        raise 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error analyzing resume: {str(e)}")
 
@@ -233,12 +233,11 @@ async def analyze_resume_endpoint(
 # =============================================================================
 @app.post("/get-embedding")
 async def create_embedding(
-    text_data: Optional[TextRequest] = Body(None),
-    text: Optional[str] = Form(None)
+    text_data: Optional[TextRequest] = Body(None)
 ):
-    """Generate text embedding vector"""
+    """Generate text embedding vector from JSON"""
     try:
-        input_text = text or (text_data.text if text_data else None)
+        input_text = text_data.text if text_data else None
         if not input_text:
             raise HTTPException(status_code=400, detail="No text provided")
         
@@ -268,12 +267,11 @@ async def classify_text_endpoint(text_data: TextRequest):
 
 @app.post("/call-llm")
 async def call_llm(
-    llm_request: Optional[LLMRequest] = Body(None),
-    prompt: Optional[str] = Form(None)
+    llm_request: LLMRequest 
 ):
     """Call LLM model with a prompt"""
     try:
-        input_prompt = prompt or (llm_request.prompt if llm_request else None)
+        input_prompt = llm_request.prompt
         if not input_prompt:
             raise HTTPException(status_code=400, detail="No prompt provided")
         
@@ -281,6 +279,7 @@ async def call_llm(
         return {"response": response_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calling LLM: {str(e)}")
+
 
 # =============================================================================
 # Email Management Routes
@@ -409,7 +408,11 @@ async def get_matches(candidate_id: str):
         matches = db.matching_results_collection.find_one({"candidate_id": candidate_id})
         if not matches:
             raise HTTPException(status_code=404, detail="No matches found for candidate")
+
+        # แปลง ObjectId เป็น string ก่อนส่งกลับ
+        matches["_id"] = str(matches["_id"])
         return matches
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching matches: {str(e)}")
 
