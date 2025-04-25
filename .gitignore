@@ -132,3 +132,12 @@ cython_debug/
 resume-atlas
 
 node_modules
+
+components/
+
+app.py
+
+test_api.py
+
+asd.json
+
