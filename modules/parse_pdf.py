@@ -60,26 +60,8 @@ class ResumeProcessor:
                     return text
                 except Exception as pdf_error:
                     print(f"❌ Error using PyPDFLoader: {pdf_error}")
-                    
-                    # ถ้ายังล้มเหลวอีก ลองวิธีสุดท้ายที่ง่ายที่สุด
-                    try:
-                        import PyPDF2
-                        print("📄 Trying last resort method (PyPDF2)...")
-                        with open(file_path, 'rb') as file:
-                            reader = PyPDF2.PdfReader(file)
-                            text = ""
-                            for page_num in range(len(reader.pages)):
-                                text += reader.pages[page_num].extract_text() + "\n"
-                        
-                        if text.strip():
-                            print("📄 Successfully loaded PDF with PyPDF2")
-                            return text
-                        else:
-                            print("❌ PyPDF2 failed to extract text")
-                            return None
-                    except Exception as pypdf2_error:
-                        print(f"❌ Error using PyPDF2: {pypdf2_error}")
-                        return None
+                    return None
+                
         except Exception as main_error:
             print(f"❌ Main error in load_pdf: {main_error}")
             return None
