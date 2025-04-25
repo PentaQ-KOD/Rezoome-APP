@@ -1,6 +1,7 @@
 import uvicorn
 import os
 from dotenv import load_dotenv
+from api import app
 
 # Load environment variables
 load_dotenv()
