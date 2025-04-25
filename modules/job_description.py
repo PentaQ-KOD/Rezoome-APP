@@ -1,4 +1,5 @@
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import normalize
 from modules.embed import get_embedding
 import together
 from together import Together
@@ -54,6 +55,14 @@ def analyze_resume(resume_text, candidate_id=None, optimize=False):
 
     if resume_embedding is None:
         return {}
+    
+    # Normalize embeddings
+    resume_embedding = normalize([resume_embedding])[0]
+
+    job_embeddings = {
+        position: normalize([embedding])[0]
+        for position, embedding in job_embeddings.items()
+    }
 
     # Calculate base matching scores using cosine similarity
     base_scores = {
@@ -64,6 +73,10 @@ def analyze_resume(resume_text, candidate_id=None, optimize=False):
     # Calculate keyword matching scores
     matching_scores = {}
     for position, cosine_score in base_scores.items():
+        # Filter out very low similarity (noise)
+        if cosine_score < 0.2:
+            continue
+
         job_requirements = job_descriptions[position]["requirements"].lower()
         resume_lower = resume_text.lower()
         
@@ -87,8 +100,11 @@ def analyze_resume(resume_text, candidate_id=None, optimize=False):
             else:  # Low similarity
                 bonus = keyword_match_percentage * 10  # Up to 10 points bonus
             
-            # Add bonus to final score
-            final_score += bonus
+            # Bonus only if at least one keyword matched
+            if matches > 0:
+                final_score += bonus
+            else:
+                final_score *= 0.5  # Penalize if no keywords matched
             
         # Round to 2 decimal places
         matching_scores[position] = round(final_score, 2)
