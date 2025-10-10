@@ -24,8 +24,8 @@ This API provides endpoints to interact with the Resume Atlas system, allowing y
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/resume-atlas.git
-cd resume-atlas
+git clone https://github.com/PentaQ-KOD/Rezoome-APP.git
+cd Rezoome-APP
 ```
 
 2. Install dependencies:
